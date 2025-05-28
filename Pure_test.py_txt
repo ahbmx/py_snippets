@@ -1,0 +1,133 @@
+import requests
+import json
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
+# Disable SSL warnings (only for testing with self-signed certificates)
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+class PureStorageAPI:
+    def __init__(self, array_ip, username, password):
+        self.base_url = f"https://{array_ip}/api/1.19"
+        self.username = username
+        self.password = password
+        self.headers = {
+            'Content-Type': 'application/json',
+        }
+        self.verify_ssl = False  # Set to True if using valid SSL certificates
+        self.api_token = None
+        self.authenticate()
+
+    def authenticate(self):
+        """Authenticate with username/password to get API token"""
+        auth_url = f"{self.base_url}/auth/apitoken"
+        auth_data = {
+            'username': self.username,
+            'password': self.password
+        }
+        
+        try:
+            response = requests.post(
+                auth_url,
+                headers=self.headers,
+                json=auth_data,
+                verify=self.verify_ssl
+            )
+            response.raise_for_status()
+            self.api_token = response.json().get('api_token')
+            if not self.api_token:
+                raise ValueError("Authentication failed - no token received")
+            
+            # Update headers with the new token
+            self.headers['Authorization'] = f'Bearer {self.api_token}'
+            return True
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Authentication failed: {e}")
+            return False
+
+    def get_array_status(self):
+        """Get array health status"""
+        url = f"{self.base_url}/array"
+        try:
+            response = requests.get(url, headers=self.headers, verify=self.verify_ssl)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error getting array status: {e}")
+            return None
+
+    def get_capacity_metrics(self):
+        """Get array capacity metrics"""
+        url = f"{self.base_url}/array?space=true"
+        try:
+            response = requests.get(url, headers=self.headers, verify=self.verify_ssl)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error getting capacity metrics: {e}")
+            return None
+
+    def check_health(self):
+        """Check overall array health"""
+        array_status = self.get_array_status()
+        if not array_status:
+            return "UNKNOWN"
+
+        status = array_status.get('status', 'UNKNOWN')
+        return status
+
+    def get_capacity_info(self):
+        """Get formatted capacity information"""
+        capacity = self.get_capacity_metrics()
+        if not capacity:
+            return None
+
+        # Calculate percentages
+        total = capacity['capacity'] / (1024 ** 3)  # Convert to GB
+        used = capacity['space']['total_physical'] / (1024 ** 3)
+        free = total - used
+        used_percent = (used / total) * 100
+
+        return {
+            'total_gb': round(total, 2),
+            'used_gb': round(used, 2),
+            'free_gb': round(free, 2),
+            'used_percent': round(used_percent, 2)
+        }
+
+def main():
+    # Configuration - replace with your array details
+    ARRAY_IP = "your_array_ip"
+    USERNAME = "your_username"
+    PASSWORD = "your_password"
+
+    # Initialize API client
+    pure = PureStorageAPI(ARRAY_IP, USERNAME, PASSWORD)
+
+    if not pure.api_token:
+        print("Failed to authenticate. Exiting.")
+        return
+
+    # Check array health
+    health_status = pure.check_health()
+    print(f"Array Health Status: {health_status}")
+
+    # Get capacity information
+    capacity_info = pure.get_capacity_info()
+    if capacity_info:
+        print("\nCapacity Information:")
+        print(f"Total Capacity: {capacity_info['total_gb']} GB")
+        print(f"Used Capacity: {capacity_info['used_gb']} GB ({capacity_info['used_percent']}%)")
+        print(f"Free Capacity: {capacity_info['free_gb']} GB")
+
+    # Get detailed array status
+    array_status = pure.get_array_status()
+    if array_status:
+        print("\nDetailed Array Status:")
+        print(f"Array Name: {array_status.get('array_name', 'N/A')}")
+        print(f"Version: {array_status.get('version', 'N/A')}")
+        print(f"ID: {array_status.get('id', 'N/A')}")
+        print(f"Maintenance Mode: {array_status.get('maintenance_mode', 'N/A')}")
+
+if __name__ == "__main__":
+    main()
