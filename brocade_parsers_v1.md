@@ -1,3 +1,155 @@
+# Parsing `switchShow` Output from Brocade FOS in Python
+
+Here's a Python script to parse the `switchShow` command output from Brocade FOS switches, extracting switch name, role, domain, fabric name, and all port information:
+
+```python
+import re
+from collections import defaultdict
+
+def parse_switchshow(output):
+    """Parse Brocade FOS switchShow output."""
+    result = {
+        'switch_info': {},
+        'ports': []
+    }
+    
+    # Parse switch information
+    switch_info_pattern = re.compile(
+        r'switchName:\s+(?P<switch_name>.+?)\s*$.*?'
+        r'switchType:\s+(?P<switch_type>.+?)\s*$.*?'
+        r'switchState:\s+(?P<switch_state>.+?)\s*$.*?'
+        r'switchRole:\s+(?P<switch_role>.+?)\s*$.*?'
+        r'switchDomain:\s+(?P<switch_domain>\d+)\s*$.*?'
+        r'switchId:\s+(?P<switch_id>.+?)\s*$.*?'
+        r'fabric\.name:\s+(?P<fabric_name>.+?)\s*$',
+        re.MULTILINE | re.DOTALL
+    )
+    
+    switch_info_match = switch_info_pattern.search(output)
+    if switch_info_match:
+        result['switch_info'] = switch_info_match.groupdict()
+    
+    # Parse port information
+    port_section_start = output.find("================")
+    if port_section_start == -1:
+        return result
+    
+    port_lines = output[port_section_start:].split('\n')[2:]  # Skip header lines
+    
+    port_pattern = re.compile(
+        r'^(?P<index>\d+)\s+'
+        r'(?P<slot>\d+)\s+'
+        r'(?P<port>\d+)\s+'
+        r'(?P<type>\S+)\s+'
+        r'(?P<media>\S+)\s+'
+        r'(?P<speed>\S+)\s+'
+        r'(?P<state>\S+)\s+'
+        r'(?P<mode>\S+)\s+'
+        r'(?P<wwn>\S+)\s*'
+        r'(?P<comment>.*)?$'
+    )
+    
+    for line in port_lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        port_match = port_pattern.match(line)
+        if port_match:
+            port_info = port_match.groupdict()
+            # Clean up the comment field
+            if 'comment' in port_info and port_info['comment']:
+                port_info['comment'] = port_info['comment'].strip('"')
+            else:
+                port_info['comment'] = ''
+            result['ports'].append(port_info)
+    
+    return result
+
+# Example usage
+if __name__ == "__main__":
+    # Example switchShow output (truncated for brevity)
+    switchshow_output = """
+switchName:     BROCADE_SWITCH_1
+switchType:     100.00
+switchState:    Online    
+switchMode:     Native
+switchRole:     Principal
+switchDomain:   1
+switchId:       fffc01
+switchWwn:      10:00:00:05:33:86:7b:6f
+zoning:         ON
+switchBeacon:   OFF
+fabric.name:    FABRIC_PROD
+
+Index Slot Port Address Media Speed State     Proto
+==================================================
+  0    0   0   010000   id    N8   Online      FC  F-Port  50:00:09:72:00:11:9b:01
+  1    0   1   010100   id    N8   Online      FC  F-Port  50:00:09:72:00:11:9b:02
+  2    0   2   010200   id    N8   No_Light    FC
+  3    0   3   010300   id    N8   Online      FC  F-Port  50:00:09:72:00:11:9b:03
+  4    0   4   010400   id    N8   Online      FC  F-Port  50:00:09:72:00:11:9b:04
+"""
+
+    parsed_data = parse_switchshow(switchshow_output)
+    
+    print("Switch Information:")
+    print(f"Name: {parsed_data['switch_info'].get('switch_name', 'N/A')}")
+    print(f"Role: {parsed_data['switch_info'].get('switch_role', 'N/A')}")
+    print(f"Domain: {parsed_data['switch_info'].get('switch_domain', 'N/A')}")
+    print(f"Fabric Name: {parsed_data['switch_info'].get('fabric_name', 'N/A')}")
+    
+    print("\nPort Information:")
+    for port in parsed_data['ports']:
+        print(f"Port {port['port']} (Slot {port['slot']}):")
+        print(f"  Type: {port['type']}, Media: {port['media']}, Speed: {port['speed']}")
+        print(f"  State: {port['state']}, Mode: {port['mode']}")
+        print(f"  WWN: {port['wwn']}")
+        if port['comment']:
+            print(f"  Comment: {port['comment']}")
+        print()
+```
+
+## Features:
+
+1. **Switch Information Extraction**:
+   - Switch name
+   - Switch role (Principal, Subordinate, etc.)
+   - Switch domain ID
+   - Fabric name
+   - Other switch attributes (type, state, etc.)
+
+2. **Port Information Extraction**:
+   - Port index, slot, and number
+   - Port type and media
+   - Speed and state
+   - Protocol mode (F-Port, E-Port, etc.)
+   - WWN of connected device (if any)
+   - Comments/aliases
+
+3. **Robust Parsing**:
+   - Handles multi-line output
+   - Uses regular expressions for precise pattern matching
+   - Gracefully handles missing or malformed data
+
+## Usage:
+
+1. Save the output of `switchShow` from your Brocade switch to a file or variable
+2. Pass the output to the `parse_switchshow()` function
+3. Access the structured data in the returned dictionary
+
+## Output Format:
+
+The function returns a dictionary with two main sections:
+- `switch_info`: Dictionary containing all switch attributes
+- `ports`: List of dictionaries, each representing a port with all its attributes
+
+You can modify the script to suit your specific needs or integrate it with other tools for monitoring or reporting.
+
+
+
+
+
 Here's a comprehensive Python script to parse various Brocade FOS commands, including `firmwareshow`, `lscfg`, `sensorshow`, `fabricshow`, `sfpshow`, `alishow`, `zoneshow`, and `islshow`:
 
 ```python
