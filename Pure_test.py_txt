@@ -1,133 +1,134 @@
 import requests
 import json
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
+from datetime import datetime
+import argparse
 
-# Disable SSL warnings (only for testing with self-signed certificates)
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+# Disable SSL warnings (only for testing with self-signed certs)
+requests.packages.urllib3.disable_warnings()
 
-class PureStorageAPI:
-    def __init__(self, array_ip, username, password):
-        self.base_url = f"https://{array_ip}/api/1.19"
-        self.username = username
-        self.password = password
+class PureStorageMonitor:
+    def __init__(self, array_ip, api_token):
+        self.base_url = f"https://{array_ip}/api/2.x"
         self.headers = {
-            'Content-Type': 'application/json',
+            "Authorization": f"Bearer {api_token}",
+            "Content-Type": "application/json"
         }
-        self.verify_ssl = False  # Set to True if using valid SSL certificates
-        self.api_token = None
-        self.authenticate()
+        self.verify_ssl = False  # Set to True for production with valid certs
 
-    def authenticate(self):
-        """Authenticate with username/password to get API token"""
-        auth_url = f"{self.base_url}/auth/apitoken"
-        auth_data = {
-            'username': self.username,
-            'password': self.password
-        }
-        
-        try:
-            response = requests.post(
-                auth_url,
-                headers=self.headers,
-                json=auth_data,
-                verify=self.verify_ssl
-            )
-            response.raise_for_status()
-            self.api_token = response.json().get('api_token')
-            if not self.api_token:
-                raise ValueError("Authentication failed - no token received")
-            
-            # Update headers with the new token
-            self.headers['Authorization'] = f'Bearer {self.api_token}'
-            return True
-            
-        except requests.exceptions.RequestException as e:
-            print(f"Authentication failed: {e}")
-            return False
+    def get_array_capacity(self):
+        """Get array capacity and space usage metrics"""
+        url = f"{self.base_url}/arrays/space"
+        response = requests.get(url, headers=self.headers, verify=self.verify_ssl)
+        return response.json()
 
-    def get_array_status(self):
+    def get_data_reduction(self):
+        """Get data reduction metrics"""
+        url = f"{self.base_url}/arrays/data-reduction"
+        response = requests.get(url, headers=self.headers, verify=self.verify_ssl)
+        return response.json()
+
+    def get_alerts(self):
+        """Get active alerts"""
+        url = f"{self.base_url}/alerts?filter=state='open'"
+        response = requests.get(url, headers=self.headers, verify=self.verify_ssl)
+        return response.json()
+
+    def get_array_health(self):
         """Get array health status"""
-        url = f"{self.base_url}/array"
-        try:
-            response = requests.get(url, headers=self.headers, verify=self.verify_ssl)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"Error getting array status: {e}")
-            return None
+        url = f"{self.base_url}/arrays/status"
+        response = requests.get(url, headers=self.headers, verify=self.verify_ssl)
+        return response.json()
 
-    def get_capacity_metrics(self):
-        """Get array capacity metrics"""
-        url = f"{self.base_url}/array?space=true"
-        try:
-            response = requests.get(url, headers=self.headers, verify=self.verify_ssl)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            print(f"Error getting capacity metrics: {e}")
-            return None
+    def get_volumes_space(self):
+        """Get volumes space usage"""
+        url = f"{self.base_url}/volumes?space=true"
+        response = requests.get(url, headers=self.headers, verify=self.verify_ssl)
+        return response.json()
 
-    def check_health(self):
-        """Check overall array health"""
-        array_status = self.get_array_status()
-        if not array_status:
-            return "UNKNOWN"
+    def bytes_to_human(self, bytes_size):
+        """Convert bytes to human-readable format"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB', 'PB']:
+            if bytes_size < 1024.0:
+                return f"{bytes_size:.2f} {unit}"
+            bytes_size /= 1024.0
+        return f"{bytes_size:.2f} PB"
 
-        status = array_status.get('status', 'UNKNOWN')
-        return status
-
-    def get_capacity_info(self):
-        """Get formatted capacity information"""
-        capacity = self.get_capacity_metrics()
-        if not capacity:
-            return None
-
-        # Calculate percentages
-        total = capacity['capacity'] / (1024 ** 3)  # Convert to GB
-        used = capacity['space']['total_physical'] / (1024 ** 3)
-        free = total - used
-        used_percent = (used / total) * 100
-
-        return {
-            'total_gb': round(total, 2),
-            'used_gb': round(used, 2),
-            'free_gb': round(free, 2),
-            'used_percent': round(used_percent, 2)
+    def generate_report(self, json_output=False):
+        """Generate a comprehensive report"""
+        report = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "capacity": self.get_array_capacity(),
+            "data_reduction": self.get_data_reduction(),
+            "health": self.get_array_health(),
+            "alerts": self.get_alerts(),
+            "volumes": self.get_volumes_space()
         }
+
+        if json_output:
+            return json.dumps(report, indent=2)
+        else:
+            return self._format_human_report(report)
+
+    def _format_human_report(self, report):
+        """Format the report for human-readable output"""
+        output = []
+        output.append(f"=== Pure Storage FlashArray Report ===")
+        output.append(f"Generated at: {report['timestamp']}")
+        
+        # Capacity Summary
+        capacity = report['capacity']
+        output.append("\n--- Capacity Summary ---")
+        output.append(f"Total Physical Capacity: {self.bytes_to_human(capacity['capacity'])}")
+        output.append(f"Used Physical Space: {self.bytes_to_human(capacity['space']['total_physical'])}")
+        output.append(f"Unique Data: {self.bytes_to_human(capacity['space']['unique'])}")
+        output.append(f"Snapshot Space: {self.bytes_to_human(capacity['space']['snapshots'])}")
+        output.append(f"Data Reduction Ratio: {capacity['data_reduction']:.2f}:1")
+        
+        # Data Reduction
+        dr = report['data_reduction']
+        output.append("\n--- Data Reduction Details ---")
+        output.append(f"Total Reduction: {dr['total_reduction']:.2f}:1")
+        output.append(f"Deduplication: {dr['deduplication']:.2f}:1")
+        output.append(f"Compression: {dr['compression']:.2f}:1")
+        
+        # Health Status
+        health = report['health']
+        output.append("\n--- Array Health ---")
+        output.append(f"Status: {'HEALTHY' if health['status'] == 'ok' else 'DEGRADED'}")
+        output.append(f"Version: {health['version']}")
+        
+        # Alerts
+        alerts = report['alerts']
+        output.append("\n--- Active Alerts ---")
+        if not alerts:
+            output.append("No active alerts")
+        else:
+            for alert in alerts:
+                output.append(f"[{alert['severity']}] {alert['component_name']}: {alert['summary']}")
+        
+        # Volumes Summary
+        volumes = report['volumes']
+        output.append("\n--- Volumes Summary ---")
+        output.append(f"Total Volumes: {len(volumes)}")
+        if volumes:
+            vol = volumes[0]  # Just show first volume as example
+            output.append(f"Sample Volume '{vol['name']}':")
+            output.append(f"  Provisioned: {self.bytes_to_human(vol['size'])}")
+            output.append(f"  Used: {self.bytes_to_human(vol['space'])}")
+            output.append(f"  Data Reduction: {vol['data_reduction']:.2f}:1")
+        
+        return "\n".join(output)
 
 def main():
-    # Configuration - replace with your array details
-    ARRAY_IP = "your_array_ip"
-    USERNAME = "your_username"
-    PASSWORD = "your_password"
+    parser = argparse.ArgumentParser(description='Pure Storage FlashArray Monitoring Script')
+    parser.add_argument('--array-ip', required=True, help='FlashArray IP or hostname')
+    parser.add_argument('--api-token', required=True, help='API token for authentication')
+    parser.add_argument('--json', action='store_true', help='Output in JSON format')
+    args = parser.parse_args()
 
-    # Initialize API client
-    pure = PureStorageAPI(ARRAY_IP, USERNAME, PASSWORD)
-
-    if not pure.api_token:
-        print("Failed to authenticate. Exiting.")
-        return
-
-    # Check array health
-    health_status = pure.check_health()
-    print(f"Array Health Status: {health_status}")
-
-    # Get capacity information
-    capacity_info = pure.get_capacity_info()
-    if capacity_info:
-        print("\nCapacity Information:")
-        print(f"Total Capacity: {capacity_info['total_gb']} GB")
-        print(f"Used Capacity: {capacity_info['used_gb']} GB ({capacity_info['used_percent']}%)")
-        print(f"Free Capacity: {capacity_info['free_gb']} GB")
-
-    # Get detailed array status
-    array_status = pure.get_array_status()
-    if array_status:
-        print("\nDetailed Array Status:")
-        print(f"Array Name: {array_status.get('array_name', 'N/A')}")
-        print(f"Version: {array_status.get('version', 'N/A')}")
-        print(f"ID: {array_status.get('id', 'N/A')}")
-        print(f"Maintenance Mode: {array_status.get('maintenance_mode', 'N/A')}")
+    monitor = PureStorageMonitor(args.array_ip, args.api_token)
+    report = monitor.generate_report(json_output=args.json)
+    print(report)
 
 if __name__ == "__main__":
     main()
